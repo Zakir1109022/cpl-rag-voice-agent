@@ -29,7 +29,17 @@ dependencies = [
     # Utilities
     "python-dotenv",
     "pydantic-settings",
+    "duckduckgo-search>=7.0",
+
+    # Browser automation (Playwright + Chromium)
+    "playwright>=1.47",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["langchain_agent", "voice_agent"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]

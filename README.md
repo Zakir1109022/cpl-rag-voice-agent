@@ -27,11 +27,19 @@ cp .env.example .env
 # Ingest PDF documents into vector DB (Windows PowerShell)
 .\.venv\Scripts\python.exe ingest.py
 
-# Start the voice agent (Windows PowerShell)
-.\.venv\Scripts\python.exe -m voice_agent.main console
+# Start the voice agent and connect it to LiveKit (Windows PowerShell)
+.\.venv\Scripts\python.exe -m voice_agent.main dev
 
 # On macOS/Linux, use .venv/bin/python instead of .venv\Scripts\python.exe
 ```
+
+`dev` (or `start` in production) registers a worker with LiveKit and auto-dispatches
+it to new rooms, so the agent joins any room the frontend connects to.
+
+> **Do not use `console` mode with the web frontend.** `console` runs the worker
+> *unregistered* and only simulates a local `console-room`, so it never joins a real
+> LiveKit room. The frontend waits 20s, then fails with "Agent did not join the room."
+> Use `console` only for terminal-only testing, e.g. `... -m voice_agent.main console`.
 
 
 ---

@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     livekit_api_key: str
     livekit_api_secret: str
 
+    # Agent dispatch. Empty registers the worker for automatic dispatch to any
+    # room. A non-empty value enables explicit dispatch: the worker only accepts
+    # jobs for rooms requesting this name. Must match frontend AGENT_NAME.
+    agent_name: str = ""
+
     # LLM Configuration
     groq_api_key: str
     groq_model: str = "openai/gpt-oss-120b"
@@ -44,6 +49,29 @@ class Settings(BaseSettings):
     tts_model: str = "inworld/inworld-tts-2"
     tts_voice: str = "Ashley"
 
+    # Browser automation (Playwright / Chromium)
+    # All browser_* tools are gated by `browser_enabled`. When False the
+    # browser_* LangChain tools are not registered and the SYSTEM_PROMPT
+    # omits the BROWSER TOOLS section, so the agent remains fully usable
+    # in environments without Chromium installed.
+    browser_enabled: bool = True
+    browser_headless: bool = True
+    browser_max_contexts: int = 8
+    browser_idle_timeout_s: int = 300
+    browser_allowed_domains: str = ""  # CSV globs; empty = allow all + warn
+    browser_allow_private: bool = False
+    browser_allow_eval: bool = True
+    browser_default_timeout_ms: int = 15000
+    browser_action_timeout_ms: int = 5000
+    browser_viewport_w: int = 1280
+    browser_viewport_h: int = 720
+    browser_locale: str = "en-IN"
+    browser_timezone: str = "Asia/Kolkata"
+    browser_user_agent: str = ""  # empty = Playwright default
+    browser_proxy: str = ""
+    browser_download_dir: str = "/tmp/browser_downloads"
+    browser_max_actions_per_turn: int = 25
+
 
 settings = Settings()
 
@@ -51,4 +79,5 @@ settings = Settings()
 os.environ.setdefault("LIVEKIT_URL", settings.livekit_url)
 os.environ.setdefault("LIVEKIT_API_KEY", settings.livekit_api_key)
 os.environ.setdefault("LIVEKIT_API_SECRET", settings.livekit_api_secret)
+os.environ.setdefault("AGENT_NAME", settings.agent_name)
 os.environ.setdefault("GROQ_API_KEY", settings.groq_api_key)

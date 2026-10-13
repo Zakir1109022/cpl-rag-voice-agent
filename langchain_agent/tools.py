@@ -10,6 +10,15 @@ from sentence_transformers import SentenceTransformer
 from config import settings
 from langchain_agent.rag import retrieve, build_context
 
+# Browser tools (Playwright). Imported eagerly so the @tool decorators run,
+# but every browser_* tool itself is a no-op when BROWSER_ENABLED=0.
+from langchain_agent.browser import BROWSER_TOOLS as _BROWSER_TOOLS
+
+try:
+    from duckduckgo_search import DDGS
+except ImportError:  # pragma: no cover - newer split-package layout
+    from ddgs import DDGS  # type: ignore[no-redef]
+
 
 # ---------------------------------------------------------------------------
 # Shared singletons — initialized once at import time
@@ -294,12 +303,51 @@ def escalate_to_support(reason: str) -> str:
     )
 
 
+@tool
+def web_search(query: str, max_results: int = 5) -> str:
+    """Search the public web for TEXT SNIPPETS — general knowledge, news,
+    facts, regulations, third-party reviews. Returns up to 10 short text
+    excerpts; does NOT open a website.
+
+    IMPORTANT: if the user asks to OPEN, VISIT, BROWSE, or GO TO a
+    website, or to interact with a page (click, type, fill a form),
+    use the browser_* tools (browser_navigate, browser_click, etc.) —
+    NOT this one. web_search is for read-only text lookup only.
+
+    Use web_search when the question cannot be answered by search_plans,
+    check_account_balance, check_network_status, get_plan_recommendation,
+    get_plan_details, or escalate_to_support."""
+
+    max_results = max(1, min(int(max_results), 10))
+
+    try:
+        with DDGS() as ddgs:
+            results = list(
+                ddgs.text(query, max_results=max_results, backend="auto")
+            )
+    except Exception as exc:
+        return f"Web search is currently unavailable: {exc}"
+
+    if not results:
+        return f"No web results found for: {query}"
+
+    parts = [
+        f"[{i+1}] {r.get('title', '(no title)')}\n"
+        f"{r.get('body', '')}\n"
+        f"{r.get('href', '')}"
+        for i, r in enumerate(results[:max_results])
+    ]
+    return "\n\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = (
     "You are a friendly and professional voice-based customer support agent for Cpl Phones.\n"
+    "You have real tools. When the user asks you to do something you can do with a tool, "
+    "you MUST call the tool. Do not say 'I can't' or 'I'm unable' — try the tool first.\n"
     "\n"
     "GUIDELINES:\n"
     "- Use search_plans to answer questions about data plans, pricing, validity, or comparisons.\n"
@@ -308,6 +356,30 @@ SYSTEM_PROMPT = (
     "- Use get_plan_recommendation when the customer describes usage patterns.\n"
     "- Use get_plan_details for detailed plan information.\n"
     "- Use escalate_to_support for issues you cannot resolve.\n"
+    + (
+        "- When the user asks you to OPEN, VISIT, BROWSE, or GO TO a website "
+        "(e.g. 'open youtube.com', 'go to flipkart', 'browse amazon.in'), "
+        "ALWAYS call browser_navigate(url='...'). Do NOT say you cannot browse.\n"
+        "- When the user asks you to perform an action on a page (click, type, "
+        "search, fill a form, check an order, log in), use the browser_* tools: "
+        "browser_navigate first, then browser_snapshot to see the page, then "
+        "browser_click / browser_type / browser_press_key as needed.\n"
+        "- Use web_search ONLY for general knowledge questions (news, facts, "
+        "explanations) where the user does NOT want you to actually open a site.\n"
+        if settings.browser_enabled
+        else "- Use web_search for general knowledge, news, or anything outside Cpl Phones' own data.\n"
+    )
+    + "\n"
+    "BROWSER TOOL USAGE NOTES:\n"
+    "- browser_navigate(url, wait_until='load') opens a URL in a real browser. "
+    "Pass a full URL like 'https://www.youtube.com' or 'https://www.google.com'.\n"
+    "- browser_open_tab(url='') opens a new browser tab, optionally navigating to a URL.\n"
+    "- browser_snapshot returns the page structure (title, URL, key text) after a navigate.\n"
+    "- browser_click / browser_type accept a CSS selector, a 'role:<role>:<name>' "
+    "reference, or a visible-text fragment.\n"
+    "- Speak only a one-sentence summary of what happened. NEVER read page text "
+    "aloud verbatim. Keep your response under 30 words.\n"
+    "- If a browser tool returns an error, say so briefly and offer to escalate.\n"
     "\n"
     "TONE:\n"
     "- Be warm, professional, and helpful.\n"
@@ -334,7 +406,8 @@ ALL_TOOLS = [
     get_plan_recommendation,
     get_plan_details,
     escalate_to_support,
-]
+    web_search,
+] + (_BROWSER_TOOLS if settings.browser_enabled else [])
 
 llm = ChatGroq(model=settings.groq_model, temperature=0.0)
 

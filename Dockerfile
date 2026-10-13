@@ -17,6 +17,11 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender1 \
+    # Playwright / Chromium runtime libraries
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
+    fonts-liberation fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -31,6 +36,12 @@ RUN mkdir -p /app/.cache/huggingface && \
     uv run --no-project python -c "\
 from sentence_transformers import SentenceTransformer; \
 SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
+# Install Playwright + Chromium browser binary.
+# The Python package is already in pyproject.toml; this command downloads
+# the browser (~300MB) into the image so the runtime has no network
+# dependency on first launch.
+RUN uv run playwright install chromium
 
 # Copy the application, including source PDFs under docs/.
 COPY . .
