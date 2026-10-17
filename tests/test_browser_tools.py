@@ -108,6 +108,15 @@ def _new_page(session, room_id: str):
     return page, ctx
 
 
+def _on_worker(session, fn):
+    """Run a Playwright call on the session's dedicated worker thread.
+
+    Playwright's sync objects are thread-affine: inspecting a page from the
+    test thread raises `greenlet.error: Cannot switch to a different thread`.
+    """
+    return session._worker.call(fn)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -121,7 +130,7 @@ def test_status_reports_pool(browser_session):
     assert "[Action: status]" in out
     assert "[Room: roomA]" in out
     assert "[Contexts in pool: 1" in out
-    page.close()
+    _on_worker(session, page.close)
 
 
 @requires_chromium
@@ -172,7 +181,7 @@ def test_type_and_press_enter(browser_session):
     out = session.sync_type("roomT", "#name", "Rajesh", press_enter=False, timeout_ms=3000)
     assert "[Action: type" in out
     # Verify the input has the value
-    val = page.locator("#name").input_value()
+    val = _on_worker(session, lambda: page.locator("#name").input_value())
     assert val == "Rajesh"
 
 
@@ -183,7 +192,7 @@ def test_select_option(browser_session):
     session.sync_navigate("roomSel", site["form_url"], "load", 5000)
     out = session.sync_select("roomSel", "#plan", "premium", 3000)
     assert "[Action: select" in out
-    val = page.locator("#plan").input_value()
+    val = _on_worker(session, lambda: page.locator("#plan").input_value())
     assert val == "premium"
 
 
@@ -216,7 +225,9 @@ def test_open_and_switch_and_close_tab(browser_session):
     out = session.sync_open_tab("roomT2", site["form_url"])
     assert "[Action: open_tab" in out
     listing = session.sync_list_tabs("roomT2")
-    assert "tab 1" in listing
+    # Tabs are listed with their zero-based index; the new tab is the active one.
+    assert "[1]" in listing
+    assert "form.html" in listing
     switch = session.sync_switch_tab("roomT2", 0)
     assert "[Action: switch_tab" in switch
     close = session.sync_close_page("roomT2")
@@ -247,7 +258,7 @@ def test_screenshot(browser_session, tmp_path):
     assert "Path:" in out
     # Pick the saved path out of the output and assert it exists.
     path_line = [l for l in out.splitlines() if l.startswith("[Path:")][0]
-    path = path_line.split(":", 1)[1].strip()
+    path = path_line.split(":", 1)[1].strip().rstrip("]")
     assert os.path.exists(path)
     assert os.path.getsize(path) > 0
 
@@ -278,3 +289,41 @@ def test_lru_eviction(browser_session):
         pages[r], _ = _new_page(session, r)
     status = session.sync_status(rooms[-1])
     assert "[Contexts in pool: 4" in status  # capped at 4
+
+
+# ---------------------------------------------------------------------------
+# URL normalization (regression: double-scheme navigation bug)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_url_keeps_existing_scheme(browser_modules):
+    """A URL that already has a scheme must be passed through unchanged.
+
+    The old implementation split on '/' before testing for '://', so the
+    '//' in 'https://example.com' split the scheme away and every full URL
+    became 'https://https://example.com' → ERR_NAME_NOT_RESOLVED, and the
+    voice agent told customers it could not use a browser.
+    """
+    normalize_url = browser_modules["tools_helpers"].normalize_url
+    assert normalize_url("https://www.example.com") == "https://www.example.com"
+    assert normalize_url("http://a.b/c") == "http://a.b/c"
+    assert normalize_url("  https://youtube.com/watch  ") == "https://youtube.com/watch"
+
+
+def test_normalize_url_adds_https_to_bare_domains(browser_modules):
+    normalize_url = browser_modules["tools_helpers"].normalize_url
+    assert normalize_url("youtube.com") == "https://youtube.com"
+    assert normalize_url("www.google.com") == "https://www.google.com"
+    assert normalize_url("") == ""
+
+
+@requires_chromium
+def test_sync_helpers_create_context_on_demand(browser_session):
+    """A tool call for a room without a warmed context must create one
+    instead of failing with 'no browser context for room ...'."""
+    session, site, *_ = browser_session
+    out = session.sync_navigate("roomLazy", site["index_url"], "load", 5000)
+    assert "[Action: navigate" in out
+    assert "Sandbox Index" in out
+    tabs = session.sync_list_tabs("roomLazy")
+    assert "Sandbox Index" in tabs

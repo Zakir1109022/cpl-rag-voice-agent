@@ -23,6 +23,7 @@ from typing import Any
 from langchain_core.tools import tool
 
 from langchain_agent.browser.session import BrowserSession
+from langchain_agent.browser.tools_helpers import normalize_url as _normalize_url
 
 
 # ---------------------------------------------------------------------------
@@ -95,20 +96,6 @@ def _run(coro_factory) -> str:
 # ---------------------------------------------------------------------------
 # Helpers used by individual tools
 # ---------------------------------------------------------------------------
-
-
-def _normalize_url(value: str) -> str:
-    """Add https:// when the caller passes a bare domain like 'youtube.com'.
-
-    Leaves alone anything that already has a scheme (http, https, ftp, etc.)
-    — the safety layer will reject non-http(s) schemes with a spoken error.
-    """
-    v = (value or "").strip()
-    if not v:
-        return v
-    if "://" in v.split("/", 1)[0]:
-        return v  # already has a scheme
-    return f"https://{v}"
 
 
 async def _guarded(room_id: str, fn, *args, **kwargs):

@@ -29,14 +29,22 @@ def _chromium_installed() -> bool:
         from playwright.sync_api import sync_playwright  # noqa: F401
     except Exception:
         return False
-    home = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or os.path.join(
-        os.path.expanduser("~"), ".cache", "ms-playwright"
-    )
-    # Quick heuristic — if the directory doesn't exist or has no chromium
+    candidates = []
+    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env_path:
+        candidates.append(env_path)
+    # Windows default install location.
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.append(os.path.join(local_app_data, "ms-playwright"))
+    # Linux/macOS default install location.
+    candidates.append(os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright"))
+    # Quick heuristic - if none of the directories exist or hold a chromium
     # build, assume the browser isn't available.
-    if not os.path.isdir(home):
-        return False
-    return any("chromium" in name for name in os.listdir(home))
+    for home in candidates:
+        if os.path.isdir(home) and any("chromium" in name for name in os.listdir(home)):
+            return True
+    return False
 
 
 requires_chromium = pytest.mark.skipif(

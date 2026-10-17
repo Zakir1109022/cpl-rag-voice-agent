@@ -308,6 +308,13 @@ class BrowserSession:
         # touches the context map, so no locking is needed here.
         rc = self._contexts.get(room_id)
         if rc is None:
+            # Create on demand: covers a tool racing the entrypoint's warm-up
+            # task, or a context that was LRU-evicted mid-session. Both used to
+            # surface as "no browser context for room ..." and the LLM would
+            # tell the customer it cannot use a browser.
+            self._context_for_worker(room_id)
+            rc = self._contexts.get(room_id)
+        if rc is None:
             raise RuntimeError(f"no browser context for room {room_id!r}")
         rc.last_used_at = time.monotonic()
         return rc
@@ -573,87 +580,88 @@ class BrowserSession:
     def sync_screenshot(self, room_id: str, path: str | None, full_page: bool) -> str:
         def _run() -> str:
             page = self._current_page(room_id)
-            if not path:
-                path = os.path.join(self._settings.download_dir, f"shot_{int(time.time()*1000)}.png")
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            dest = path
+            if not dest:
+                dest = os.path.join(self._settings.download_dir, f"shot_{int(time.time()*1000)}.png")
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
             try:
-                page.screenshot(path=path, full_page=bool(full_page))
+                page.screenshot(path=dest, full_page=bool(full_page))
             except Exception as exc:
                 return f"Error: screenshot failed: {exc}"
             try:
-                size = os.path.getsize(path)
+                size = os.path.getsize(dest)
             except OSError:
                 size = -1
-            return f"[Action: screenshot]\n[Path: {path}]\n[Bytes: {size}]\n[Full page: {bool(full_page)}]"
+            return f"[Action: screenshot]\n[Path: {dest}]\n[Bytes: {size}]\n[Full page: {bool(full_page)}]"
 
         return self._worker.call(_run)
 
     def sync_storage_get(self, room_id: str, kind: str, key: str | None) -> str:
         def _run() -> str:
             page = self._current_page(room_id)
-            kind = (kind or "local").lower()
+            kind_norm = (kind or "local").lower()
             try:
-                if kind == "local":
+                if kind_norm == "local":
                     value = page.evaluate("k => k ? localStorage.getItem(k) : JSON.stringify(localStorage)", key)
-                elif kind == "session":
+                elif kind_norm == "session":
                     value = page.evaluate("k => k ? sessionStorage.getItem(k) : JSON.stringify(sessionStorage)", key)
-                elif kind == "cookies":
+                elif kind_norm == "cookies":
                     cookies = page.context.cookies()
                     if key:
                         value = next((c for c in cookies if c.get("name") == key), None)
                     else:
                         value = cookies
                 else:
-                    return f"Error: unknown storage kind {kind!r}; use local|session|cookies"
+                    return f"Error: unknown storage kind {kind_norm!r}; use local|session|cookies"
             except Exception as exc:
                 return f"Error: storage_get failed: {exc}"
             try:
                 rendered = json.dumps(value, default=str)[:2000]
             except (TypeError, ValueError):
                 rendered = str(value)[:2000]
-            return f"[Action: storage_get(kind={kind!r}, key={key!r})]\n[Result: {rendered}]"
+            return f"[Action: storage_get(kind={kind_norm!r}, key={key!r})]\n[Result: {rendered}]"
 
         return self._worker.call(_run)
 
     def sync_storage_set(self, room_id: str, kind: str, key: str, value: str) -> str:
         def _run() -> str:
             page = self._current_page(room_id)
-            kind = (kind or "local").lower()
+            kind_norm = (kind or "local").lower()
             try:
-                if kind == "local":
+                if kind_norm == "local":
                     page.evaluate("(args) => localStorage.setItem(args.k, args.v)", {"k": key, "v": value})
-                elif kind == "session":
+                elif kind_norm == "session":
                     page.evaluate("(args) => sessionStorage.setItem(args.k, args.v)", {"k": key, "v": value})
                 else:
-                    return f"Error: storage_set only supports local|session, not {kind!r}"
+                    return f"Error: storage_set only supports local|session, not {kind_norm!r}"
             except Exception as exc:
                 return f"Error: storage_set failed: {exc}"
-            return f"[Action: storage_set(kind={kind!r}, key={key!r})]\n[Result: ok]"
+            return f"[Action: storage_set(kind={kind_norm!r}, key={key!r})]\n[Result: ok]"
 
         return self._worker.call(_run)
 
     def sync_storage_clear(self, room_id: str, kind: str) -> str:
         def _run() -> str:
             rc = self._require_context(room_id)
-            kind = (kind or "all").lower()
+            kind_norm = (kind or "all").lower()
             try:
-                if kind in ("local", "all"):
+                if kind_norm in ("local", "all"):
                     for p in rc.pages:
                         try:
                             p.evaluate("() => localStorage.clear()")
                         except Exception:
                             pass
-                if kind in ("session", "all"):
+                if kind_norm in ("session", "all"):
                     for p in rc.pages:
                         try:
                             p.evaluate("() => sessionStorage.clear()")
                         except Exception:
                             pass
-                if kind in ("cookies", "all"):
+                if kind_norm in ("cookies", "all"):
                     rc.context.clear_cookies()
             except Exception as exc:
                 return f"Error: storage_clear failed: {exc}"
-            return f"[Action: storage_clear(kind={kind!r})]\n[Result: ok]"
+            return f"[Action: storage_clear(kind={kind_norm!r})]\n[Result: ok]"
 
         return self._worker.call(_run)
 
